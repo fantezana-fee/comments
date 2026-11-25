@@ -1,0 +1,7 @@
+{
+  "model": "claude-sonnet-5-5",
+  "cta": {
+    "keywords": ["liberty"],
+    "replies": ["Sent!", "Sent! Check your DMs.", "Just sent it your way!", "Sent! Hope you enjoy it."]
+  }
+}

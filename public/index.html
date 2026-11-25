@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FEE Comment Assistant</title>
+<link rel="stylesheet" href="https://use.typekit.net/sxi1zkj.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@500;700&display=swap">
+<style>
+:root {
+  --navy: #214291; --paper: #F4F3ED; --slate: #C0DBE2; --orange: #F16631; --gold: #FBAF33; --white: #fff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--navy); font: 500 16px/1.5 'futura-pt', 'Lexend', sans-serif; }
+h1, h2, h3 { font-family: 'futura-pt', 'Lexend', sans-serif; font-weight: 700; margin: 0; }
+header { background: var(--white); border-bottom: 1px solid var(--slate); padding: 12px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+header img { height: 38px; }
+header h1 { font-size: 18px; text-transform: uppercase; letter-spacing: .06em; }
+header .who { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+input, textarea, select { font: inherit; color: var(--navy); border: 1px solid var(--navy); background: var(--white); padding: 8px 10px; border-radius: 4px; width: 100%; }
+textarea { resize: vertical; }
+label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; margin: 12px 0 4px; }
+button { font: inherit; text-transform: uppercase; letter-spacing: .08em; font-size: 13px; padding: 9px 14px; border-radius: 4px; border: 1px solid var(--navy); background: var(--white); color: var(--navy); cursor: pointer; }
+button:hover { background: var(--slate); }
+button.primary { background: var(--orange); border-color: var(--orange); color: var(--white); }
+button.primary:hover { background: #d9561f; }
+button:disabled { opacity: .5; cursor: default; }
+main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; }
+.panel { background: var(--white); border: 1px solid var(--slate); border-radius: 6px; padding: 16px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.tabs button.on { background: var(--navy); color: var(--paper); }
+.item { padding: 10px; border: 1px solid var(--slate); border-radius: 4px; margin-bottom: 8px; cursor: pointer; background: var(--paper); }
+.item:hover, .item.sel { border-color: var(--navy); }
+.item .meta { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; display: flex; gap: 8px; align-items: center; margin-bottom: 2px; }
+.item .txt { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tag { background: var(--slate); padding: 1px 7px; border-radius: 10px; font-size: 11px; }
+.tag.warn { background: var(--gold); }
+.tag.bad { background: var(--orange); color: var(--white); }
+.quote { border-left: 4px solid var(--slate); padding: 4px 12px; margin: 6px 0 12px; font-family: 'minion-pro', 'Times New Roman', serif; font-weight: 700; font-style: italic; font-size: 18px; }
+.note { background: var(--slate); padding: 10px 12px; border-radius: 4px; font-size: 14px; margin: 12px 0; }
+.err { background: var(--orange); color: var(--white); padding: 10px 12px; border-radius: 4px; margin: 12px 0; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.count { font-size: 12px; opacity: .75; text-align: right; }
+.muted { opacity: .7; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } header .who { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <img src="logo.png" alt="80 Years of FEE">
+  <h1>Comment Assistant</h1>
+  <div class="who"><span>Reviewer</span><input id="reviewer" style="width:140px" placeholder="Your name"></div>
+</header>
+<main>
+  <section>
+    <div class="panel">
+      <h2>New comment</h2>
+      <label for="account">Account</label>
+      <select id="account"><option>FEE (main)</option><option>FEE (second account)</option></select>
+      <label for="caption">Post caption</label>
+      <textarea id="caption" rows="3" placeholder="Paste the caption of the post"></textarea>
+      <label for="comment">Comment</label>
+      <textarea id="comment" rows="4" placeholder="Paste the comment you want to answer"></textarea>
+      <div class="row"><button class="primary" id="add">Draft reply</button><span id="addStatus" class="muted"></span></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="tabs" id="tabs"></div>
+      <div id="list"></div>
+    </div>
+  </section>
+  <section class="panel" id="detail"><p class="muted">Pick a comment from the queue, or add a new one.</p></section>
+</main>
+<script>
+let items = [], sel = null, tab = 'pending';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const api = async (url, method = 'GET', body) => {
+  const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  return r.json();
+};
+$('reviewer').value = localStorage.getItem('reviewer') || '';
+$('reviewer').oninput = (e) => localStorage.setItem('reviewer', e.target.value);
+
+async function load() { items = await api('/api/items'); render(); }
+
+function render() {
+  const counts = { pending: 0, approved: 0, skipped: 0 };
+  items.forEach((i) => counts[i.status]++);
+  $('tabs').innerHTML = ['pending', 'approved', 'skipped'].map((t) =>
+    `<button class="${tab === t ? 'on' : ''}" data-t="${t}">${t} (${counts[t]})</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach((b) => b.onclick = () => { tab = b.dataset.t; render(); });
+  const shown = items.filter((i) => i.status === tab);
+  $('list').innerHTML = shown.length ? shown.map((i) => {
+    const risk = i.draft?.risk;
+    return `<div class="item ${sel === i.id ? 'sel' : ''}" data-id="${i.id}">
+      <div class="meta">${i.kind === 'cta' ? '<span class="tag">CTA</span>' : ''}
+      ${risk && risk !== 'ok' ? `<span class="tag ${risk === 'sensitive' ? 'warn' : 'bad'}">${risk}</span>` : ''}
+      ${i.error ? '<span class="tag bad">error</span>' : ''}</div>
+      <div class="txt">${esc(i.comment)}</div></div>`;
+  }).join('') : '<p class="muted">Nothing here.</p>';
+  $('list').querySelectorAll('.item').forEach((el) => el.onclick = () => { sel = el.dataset.id; render(); });
+  renderDetail();
+}
+
+function renderDetail() {
+  const i = items.find((x) => x.id === sel);
+  if (!i) { $('detail').innerHTML = '<p class="muted">Pick a comment from the queue, or add a new one.</p>'; return; }
+  const d = i.draft;
+  $('detail').innerHTML = `
+    <h2>Review</h2>
+    <label>Comment</label>
+    <div class="quote">${esc(i.comment)}</div>
+    ${i.caption ? `<label>Post caption</label><p style="margin:0 0 8px">${esc(i.caption)}</p>` : ''}
+    ${i.error ? `<div class="err">${esc(i.error)}</div>` : ''}
+    ${d?.notes ? `<div class="note"><strong>Notes for the reviewer:</strong> ${esc(d.notes)}</div>` : ''}
+    ${d?.risk && d.risk !== 'ok' ? `<div class="note" style="background:var(--gold)">Flagged: <strong>${esc(d.risk)}</strong>. Read this one carefully before posting.</div>` : ''}
+    <label for="final">Reply to post (edit freely)</label>
+    <textarea id="final" rows="5">${esc(i.final)}</textarea>
+    <div class="count" id="count"></div>
+    ${d?.short ? `<label>Shorter alternative</label><div class="row" style="margin-top:0"><span style="flex:1;min-width:200px">${esc(d.short)}</span><button id="useShort">Use this</button></div>` : ''}
+    <label for="note">Not quite right? Tell Claude what to change</label>
+    <div class="row" style="margin-top:0"><input id="note" placeholder="e.g. shorter, warmer, less formal" style="flex:1;min-width:200px"><button id="regen">Redraft</button></div>
+    <div class="row" style="margin-top:20px">
+      <button class="primary" id="copy">Copy and approve</button>
+      <button id="skip">Skip</button>
+      <button id="del">Delete</button>
+    </div>
+    <p class="muted" style="font-size:13px">Until Instagram is connected, copy the reply and paste it on Instagram (or Statusbrew) yourself.</p>
+    ${i.status === 'approved' ? `<p class="muted">Approved ${esc(new Date(i.approvedAt).toLocaleString())}${i.approvedBy ? ' by ' + esc(i.approvedBy) : ''}.</p>` : ''}`;
+  const fin = $('final');
+  const upd = () => { const w = fin.value.trim().split(/\s+/).filter(Boolean).length; $('count').textContent = `${w} words`; };
+  upd(); fin.oninput = upd;
+  if ($('useShort')) $('useShort').onclick = () => { fin.value = d.short; upd(); };
+  $('regen').onclick = async () => {
+    $('regen').disabled = true; $('regen').textContent = 'Working...';
+    await api(`/api/items/${i.id}/regenerate`, 'POST', { note: $('note').value });
+    await load();
+  };
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(fin.value); } catch {}
+    await api(`/api/items/${i.id}`, 'PATCH', { status: 'approved', final: fin.value, reviewer: $('reviewer').value });
+    sel = null; await load();
+  };
+  $('skip').onclick = async () => { await api(`/api/items/${i.id}`, 'PATCH', { status: 'skipped' }); sel = null; await load(); };
+  $('del').onclick = async () => { if (confirm('Delete this comment?')) { await api(`/api/items/${i.id}`, 'DELETE'); sel = null; await load(); } };
+}
+
+$('add').onclick = async () => {
+  const comment = $('comment').value.trim();
+  if (!comment) return;
+  $('add').disabled = true; $('addStatus').textContent = 'Drafting...';
+  const item = await api('/api/items', 'POST', { comment, caption: $('caption').value, account: $('account').value });
+  $('comment').value = ''; $('add').disabled = false; $('addStatus').textContent = '';
+  tab = 'pending'; sel = item.id; await load();
+};
+load();
+</script>
+</body>
+</html>
